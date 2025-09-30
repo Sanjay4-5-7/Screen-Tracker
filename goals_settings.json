@@ -1,0 +1,10 @@
+{
+  "daily_screen_time_goal": 36000,
+  "daily_screen_time_enabled": true,
+  "daily_productive_time_goal": 14400,
+  "daily_productive_time_enabled": false,
+  "app_limits": {},
+  "app_limits_enabled": true,
+  "notification_threshold": 0.8,
+  "notifications_enabled": true
+}

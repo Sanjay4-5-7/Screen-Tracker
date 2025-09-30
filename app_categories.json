@@ -1,0 +1,26 @@
+{
+  "productive": [
+    "slack",
+    "teams",
+    "photoshop",
+    "python",
+    "code",
+    "shellexperiencehost",
+    "claude"
+  ],
+  "entertainment": [
+    "lenovovantage",
+    "discord"
+  ],
+  "neutral": [
+    "chrome",
+    "explorer",
+    "firefox",
+    "notepad",
+    "spotify"
+  ],
+  "social": [
+    "zoom"
+  ],
+  "uncategorized": []
+}

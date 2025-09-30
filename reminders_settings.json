@@ -1,0 +1,16 @@
+{
+  "pomodoro_enabled": true,
+  "pomodoro_work_minutes": 25,
+  "pomodoro_break_minutes": 5,
+  "pomodoro_long_break_minutes": 15,
+  "pomodoro_sessions_before_long_break": 4,
+  "hourly_break_enabled": true,
+  "hourly_break_interval": 19,
+  "eye_strain_enabled": true,
+  "eye_strain_interval": 5,
+  "hydration_enabled": true,
+  "hydration_interval": 6,
+  "posture_enabled": true,
+  "posture_interval": 7,
+  "notifications_enabled": true
+}

@@ -282,12 +282,14 @@ class PomodoroTimer(QWidget):
         self.time_label.setText(f"{m:02d}:{s:02d}")
 
 class RemindersWidget(QWidget):
-    def __init__(self, theme_manager=None):
+    def __init__(self, theme_manager=None, notifier=None):
         super().__init__()
         self.theme = theme_manager
+        self.notifier = notifier  # Store notifier reference
         self.manager = RemindersManager()
         self.init_timers()
         self.init_ui()
+        print(f"RemindersWidget initialized with notifier: {self.notifier is not None}")
     
     def init_timers(self):
         """Initialize reminder timers - check every minute"""
@@ -475,8 +477,33 @@ class RemindersWidget(QWidget):
         self.show_notif("🍅 Pomodoro", msgs.get(t, ''))
     
     def show_notif(self, title, msg):
+        """Show notification using toast if available, fallback to QMessageBox"""
         if self.manager.settings['notifications_enabled']:
-            QMessageBox.information(self, title, msg)
+            # Try to use toast notifications first
+            if self.notifier:
+                print(f"Showing reminder toast: {title}")
+                try:
+                    # Choose notification type based on title
+                    if "Pomodoro" in title:
+                        self.notifier.goal(title, msg, duration=6000)
+                    elif "Break" in title:
+                        self.notifier.info(title, msg, duration=5000)
+                    elif "Hydration" in title:
+                        self.notifier.info(title, msg, duration=5000)
+                    elif "Eye" in title:
+                        self.notifier.warning(title, msg, duration=5000)
+                    elif "Posture" in title:
+                        self.notifier.warning(title, msg, duration=5000)
+                    else:
+                        self.notifier.info(title, msg, duration=5000)
+                    print("Toast notification sent successfully!")
+                except Exception as e:
+                    print(f"Error showing toast: {e}")
+                    # Fallback to QMessageBox
+                    QMessageBox.information(self, title, msg)
+            else:
+                print("No notifier available, using QMessageBox")
+                QMessageBox.information(self, title, msg)
     
     def update_theme(self):
         """Update theme without recreating the entire UI"""

@@ -363,6 +363,7 @@ class DatabaseManager:
 
 class ActivityTracker(QObject):
     data_updated = pyqtSignal()
+    idle_status_changed = pyqtSignal(bool)  # Signal for idle status changes
     
     def __init__(self, db_manager):
         super().__init__()
@@ -417,37 +418,46 @@ class ActivityTracker(QObject):
             millis = ctypes.windll.kernel32.GetTickCount() - lii.dwTime
             idle_seconds = millis / 1000.0
             
-            # Check if system became idle
+            # Check if system became idle (no input for idle_threshold seconds)
             if idle_seconds >= self.idle_threshold and not self.is_idle:
                 self.is_idle = True
                 self.idle_start_time = datetime.now() - timedelta(seconds=idle_seconds)
-                # Save session before going idle
+                # Save current session before going idle
                 self.save_current_session()
-                print(f"System is now idle (inactive for {idle_seconds:.0f}s)")
+                print(f"💤 System went idle (inactive for {idle_seconds:.0f}s) - tracking paused")
+                # Emit signal for UI update
+                self.idle_status_changed.emit(True)
                 return True
             
-            # Check if system became active again
+            # Check if system became active again (user returned)
             elif idle_seconds < self.idle_threshold and self.is_idle:
+                idle_duration = (datetime.now() - self.idle_start_time).total_seconds()
+                print(f"👋 System active again (was idle for {idle_duration:.0f}s) - resuming tracking")
                 self.is_idle = False
-                print(f"System is now active again")
-                # Reset current session
+                self.idle_start_time = None
+                # Reset current session to start fresh tracking
                 self.current_app = None
                 self.current_window = None
                 self.start_time = None
+                # Emit signal for UI update
+                self.idle_status_changed.emit(False)
                 return False
             
             return self.is_idle
             
         except Exception as e:
-            print(f"Idle check error: {e}")
+            print(f"❌ Idle check error: {e}")
             return False
     
     def track_activity(self):
         """Track current active window with idle detection"""
         try:
-            # Check if system is idle first
+            # Check if system is idle first (detects inactivity or sleep)
             if self.check_idle_status():
-                # Don't track while idle
+                # Don't track while idle - this prevents tracking during:
+                # - Computer sleep/hibernation
+                # - User inactivity (5+ minutes)
+                # - Screen locked
                 return
             
             # Get active window
@@ -1595,9 +1605,16 @@ class MainWindow(QMainWindow):
         self.category_manager = CategoryManager()  # Shared category manager
         
         # Initialize notification manager
+        print("Initializing notification manager...")
         if TOAST_NOTIFICATIONS and NotificationManager:
-            self.notifier = NotificationManager(self)
+            try:
+                self.notifier = NotificationManager(self)
+                print(f"✅ NotificationManager created successfully: {self.notifier is not None}")
+            except Exception as e:
+                print(f"❌ Error creating NotificationManager: {e}")
+                self.notifier = None
         else:
+            print(f"❌ TOAST_NOTIFICATIONS={TOAST_NOTIFICATIONS}, NotificationManager={NotificationManager}")
             self.notifier = None
         
         # Initialize goals manager
@@ -1621,9 +1638,17 @@ class MainWindow(QMainWindow):
             self.goals_timer.timeout.connect(self.check_goals)
             self.goals_timer.start(60000)  # Check every 1 minute
             print("Goals notification system initialized - will check every minute")
+            print(f"Notifier initialized: {self.notifier is not None}")
+            
+            # Test notification on startup
+            if self.notifier:
+                QTimer.singleShot(2000, self.test_notification)
         
         # Start tracking automatically on launch
         QTimer.singleShot(500, self.start_tracking)  # Delay slightly to ensure UI is ready
+        
+        # Setup system tray icon for background running
+        self.setup_system_tray()
     
     def init_ui(self):
         self.setWindowTitle("Puthu Tracker - Advanced Screen Time Analytics")
@@ -1685,8 +1710,9 @@ class MainWindow(QMainWindow):
         # Goals & Limits tab
         if GOALS_FEATURE and self.goals_manager:
             try:
-                self.goals_widget = GoalsWidget(self.db_manager, self.goals_manager, theme_manager=self.theme_manager)
+                self.goals_widget = GoalsWidget(self.db_manager, self.goals_manager, theme_manager=self.theme_manager, notifier=self.notifier)
                 self.tabs.addTab(self.goals_widget, "🎯 Goals && Limits")
+                print("Goals widget loaded with notifier")
             except Exception as e:
                 print(f"Error loading Goals widget: {e}")
         
@@ -1703,8 +1729,9 @@ class MainWindow(QMainWindow):
         # Session Reminders tab
         if REMINDERS_FEATURE and RemindersWidget:
             try:
-                self.reminders_widget = RemindersWidget(theme_manager=self.theme_manager)
+                self.reminders_widget = RemindersWidget(theme_manager=self.theme_manager, notifier=self.notifier)
                 self.tabs.addTab(self.reminders_widget, "⏰ Reminders")
+                print("Reminders widget loaded with notifier")
             except Exception as e:
                 print(f"Error loading Reminders widget: {e}")
         
@@ -2006,6 +2033,7 @@ class MainWindow(QMainWindow):
     def setup_connections(self):
         """Setup signal connections"""
         self.tracker.data_updated.connect(self.on_data_updated)
+        self.tracker.idle_status_changed.connect(self.on_idle_status_changed)
     
     def toggle_tracking(self):
         """Toggle between start and stop tracking"""
@@ -2076,6 +2104,50 @@ class MainWindow(QMainWindow):
             except:
                 pass
     
+    def on_idle_status_changed(self, is_idle):
+        """Handle idle status changes and update UI"""
+        if is_idle:
+            # System went idle - update status
+            self.status_indicator.setStyleSheet("""
+                color: #FF9500;
+                font-size: 32px;
+                background-color: transparent;
+                border: none;
+                margin: 0px;
+                padding: 0px;
+            """)
+            self.status_title.setText("Tracking Paused (Idle)")
+            self.session_label.setText("System is idle - tracking paused automatically")
+            
+            # Show notification if notifier is available
+            if hasattr(self, 'notifier') and self.notifier:
+                self.notifier.info(
+                    "Tracking Paused 💤",
+                    "System is idle. Tracking will resume when you return.",
+                    duration=4000
+                )
+        else:
+            # System became active again - restore tracking status
+            if self.tracker.tracking:
+                self.status_indicator.setStyleSheet("""
+                    color: #34C759;
+                    font-size: 32px;
+                    background-color: transparent;
+                    border: none;
+                    margin: 0px;
+                    padding: 0px;
+                """)
+                self.status_title.setText("Tracking Active")
+                self.session_label.setText(f"Tracking resumed at {datetime.now().strftime('%H:%M')}")
+                
+                # Show notification if notifier is available
+                if hasattr(self, 'notifier') and self.notifier:
+                    self.notifier.success(
+                        "Welcome Back! 👋",
+                        "Tracking has been resumed automatically.",
+                        duration=3000
+                    )
+    
     def periodic_update(self):
         """Periodic update of analytics"""
         if not self.tracker.tracking:
@@ -2084,6 +2156,22 @@ class MainWindow(QMainWindow):
         self.analytics_widget.update_analytics()
         current_time = datetime.now().strftime('%H:%M:%S')
         self.session_label.setText(f"Tracking... (Last update: {current_time})")
+    
+    def test_notification(self):
+        """Test notification system"""
+        print("Testing notification system...")
+        try:
+            if self.notifier:
+                self.notifier.info(
+                    "Puthu Tracker Started! 🎉",
+                    "Notification system is active. You'll receive alerts when limits are reached.",
+                    duration=5000
+                )
+                print("Test notification sent successfully!")
+            else:
+                print("ERROR: Notifier is None!")
+        except Exception as e:
+            print(f"ERROR testing notification: {e}")
     
     def check_goals(self):
         """Check goals and show beautiful toast notifications"""
@@ -2135,12 +2223,149 @@ class MainWindow(QMainWindow):
             else:
                 print(f"Notification already sent for: {warning_id}")
     
-    def closeEvent(self, event):
-        """Handle application close"""
-        # Stop tracking silently without showing dialog
+    def setup_system_tray(self):
+        """Setup system tray icon for background running"""
+        # Create system tray icon
+        icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        self.tray_icon.setToolTip("Puthu Tracker - Running")
+        
+        # Create tray menu
+        tray_menu = QMenu()
+        
+        # Show/Hide window action
+        show_action = QAction("📊 Show Dashboard", self)
+        show_action.triggered.connect(self.show_from_tray)
+        tray_menu.addAction(show_action)
+        
+        tray_menu.addSeparator()
+        
+        # Start/Stop tracking actions
+        self.tray_tracking_action = QAction("⏸️ Pause Tracking", self)
+        self.tray_tracking_action.triggered.connect(self.toggle_tracking_from_tray)
+        tray_menu.addAction(self.tray_tracking_action)
+        
+        tray_menu.addSeparator()
+        
+        # Quick stats action
+        stats_action = QAction("📈 Quick Stats", self)
+        stats_action.triggered.connect(self.show_tray_stats)
+        tray_menu.addAction(stats_action)
+        
+        tray_menu.addSeparator()
+        
+        # Exit action
+        exit_action = QAction("❌ Exit", self)
+        exit_action.triggered.connect(self.exit_from_tray)
+        tray_menu.addAction(exit_action)
+        
+        self.tray_icon.setContextMenu(tray_menu)
+        
+        # Double-click to show window
+        self.tray_icon.activated.connect(self.on_tray_activated)
+        
+        # Show the tray icon
+        self.tray_icon.show()
+        
+        print("✅ System tray icon initialized")
+    
+    def on_tray_activated(self, reason):
+        """Handle tray icon activation"""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.show_from_tray()
+    
+    def show_from_tray(self):
+        """Show the main window from tray"""
+        self.show()
+        self.activateWindow()
+        self.raise_()
+        print("Window shown from tray")
+    
+    def toggle_tracking_from_tray(self):
+        """Toggle tracking from tray icon"""
+        self.toggle_tracking()
+        
+        # Update tray icon tooltip and action text
+        if self.tracker.tracking:
+            self.tray_tracking_action.setText("⏸️ Pause Tracking")
+            self.tray_icon.setToolTip("Puthu Tracker - Running")
+        else:
+            self.tray_tracking_action.setText("▶️ Resume Tracking")
+            self.tray_icon.setToolTip("Puthu Tracker - Paused")
+    
+    def show_tray_stats(self):
+        """Show quick statistics in tray notification"""
+        # Get today's data
+        today_data = self.db_manager.get_app_usage_by_date()
+        
+        if today_data:
+            total_seconds = sum(duration for _, duration in today_data)
+            total_hours = total_seconds // 3600
+            total_minutes = (total_seconds % 3600) // 60
+            
+            apps_count = len(today_data)
+            most_used_app = today_data[0][0] if today_data else "None"
+            
+            message = (
+                f"📊 Today's Stats:\n\n"
+                f"⏱️ Total Time: {total_hours}h {total_minutes}m\n"
+                f"📱 Apps Used: {apps_count}\n"
+                f"🏆 Most Used: {most_used_app}"
+            )
+        else:
+            message = "No tracking data yet today.\nStart using your computer to see stats!"
+        
+        # Use toast notification if available
+        if self.notifier:
+            self.notifier.info(
+                "📊 Today's Stats",
+                message.replace("\n", " "),
+                duration=6000
+            )
+        else:
+            # Fallback to system tray notification
+            self.tray_icon.showMessage(
+                "Puthu Tracker Stats",
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                5000
+            )
+    
+    def exit_from_tray(self):
+        """Exit the application from tray"""
+        # Stop tracking
         if self.tracker.tracking:
             self.tracker.stop_tracking()
-        event.accept()
+        
+        # Hide tray icon
+        self.tray_icon.hide()
+        
+        # Quit application
+        QApplication.quit()
+    
+    def closeEvent(self, event):
+        """Handle application close - minimize to tray instead of exiting"""
+        # Don't close the app, just minimize to tray
+        event.ignore()
+        self.hide()
+        
+        # Show notification that app is still running
+        if hasattr(self, 'notifier') and self.notifier:
+            self.notifier.info(
+                "Still Running 👋",
+                "Puthu Tracker is running in the background. Double-click the tray icon to show.",
+                duration=4000
+            )
+        else:
+            # Fallback to system tray notification
+            self.tray_icon.showMessage(
+                "Puthu Tracker",
+                "Running in background. Double-click tray icon to show.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000
+            )
+        
+        print("Window minimized to tray")
 
 def main():
     # Check for required dependencies
@@ -2173,18 +2398,27 @@ def main():
         # Show welcome message for first-time users
         db_path = Path(__file__).parent / "tracking_data.db"
         if not db_path.exists():
-            QMessageBox.information(
-                window,
-                "Welcome to Puthu Tracker!",
-                "🎉 Welcome to Puthu Tracker!\n\n"
-                "This application will help you monitor and analyze your screen time.\n\n"
-                "Features:\n"
-                "• Real-time application tracking\n"
-                "• Beautiful analytics dashboard\n"
-                "• Historical data with charts\n"
-                "• Modern Apple-inspired interface\n\n"
-                "Click 'Start Tracking' to begin monitoring your screen time!"
-            )
+            # Use toast notification for welcome message
+            if hasattr(window, 'notifier') and window.notifier:
+                QTimer.singleShot(1000, lambda: window.notifier.success(
+                    "Welcome to Puthu Tracker! 🎉",
+                    "Click 'Start Tracking' to begin monitoring your screen time!",
+                    duration=8000
+                ))
+            else:
+                # Fallback to QMessageBox
+                QMessageBox.information(
+                    window,
+                    "Welcome to Puthu Tracker!",
+                    "🎉 Welcome to Puthu Tracker!\n\n"
+                    "This application will help you monitor and analyze your screen time.\n\n"
+                    "Features:\n"
+                    "• Real-time application tracking\n"
+                    "• Beautiful analytics dashboard\n"
+                    "• Historical data with charts\n"
+                    "• Modern Apple-inspired interface\n\n"
+                    "Click 'Start Tracking' to begin monitoring your screen time!"
+                )
         
         sys.exit(app.exec())
         

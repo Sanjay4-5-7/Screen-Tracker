@@ -156,12 +156,14 @@ class GoalsManager:
 class GoalsWidget(QWidget):
     """Widget for Goals and Limits settings"""
     
-    def __init__(self, db_manager, goals_manager, theme_manager=None):
+    def __init__(self, db_manager, goals_manager, theme_manager=None, notifier=None):
         super().__init__()
         self.db_manager = db_manager
         self.goals_manager = goals_manager
         self.theme_manager = theme_manager
+        self.notifier = notifier  # Store notifier reference
         self.init_ui()
+        print(f"GoalsWidget initialized with notifier: {self.notifier is not None}")
     
     def init_ui(self):
         # Create main layout
@@ -772,7 +774,19 @@ class GoalsWidget(QWidget):
         """Save daily goal"""
         hours = self.daily_goal_spinbox.value()
         self.goals_manager.set_daily_screen_time_goal(hours)
-        QMessageBox.information(self, "Success", f"Daily goal set to {hours} hours!")
+        
+        # Use toast notification if available
+        if self.notifier:
+            self.notifier.success(
+                "Goal Saved! ✅",
+                f"Daily screen time goal set to {hours} hours.",
+                duration=4000
+            )
+            print(f"Toast: Daily goal set to {hours} hours")
+        else:
+            # Fallback to QMessageBox
+            QMessageBox.information(self, "Success", f"Daily goal set to {hours} hours!")
+        
         self.update_progress()
     
     def add_app_limit(self):
@@ -784,7 +798,18 @@ class GoalsWidget(QWidget):
             self.goals_manager.set_app_limit(app_name, hours)
             self.update_limits_list()
             self.update_progress()
-            QMessageBox.information(self, "Success", f"Limit set for {app_name}: {hours} hours/day")
+            
+            # Use toast notification if available
+            if self.notifier:
+                self.notifier.success(
+                    "Limit Added! ✅",
+                    f"Time limit set for {app_name}: {hours} hours/day",
+                    duration=4000
+                )
+                print(f"Toast: Limit set for {app_name}")
+            else:
+                # Fallback to QMessageBox
+                QMessageBox.information(self, "Success", f"Limit set for {app_name}: {hours} hours/day")
     
     def update_limits_list(self):
         """Update the list of current limits"""

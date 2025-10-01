@@ -1574,28 +1574,89 @@ class HistoryWidget(QWidget):
         self.browser_table.verticalHeader().setDefaultSectionSize(50)
     
     def clear_data(self):
-        """Clear all historical data"""
+        """Clear all historical data and reset everything to default"""
         reply = QMessageBox.question(
             self, 
-            "Clear Data", 
-            "Are you sure you want to clear all tracking data? This cannot be undone.",
+            "Clear All Data", 
+            "Are you sure you want to clear ALL data and reset to defaults?\n\n"
+            "This will delete:\n"
+            "• All tracking history\n"
+            "• App categories\n"
+            "• Goals and limits\n"
+            "• Reminder settings\n\n"
+            "This action cannot be undone!",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
+        
         if reply == QMessageBox.StandardButton.Yes:
-            self.db_manager.clear_all_data()
-            self.update_history()
-            
-            # Show success notification
             try:
+                # 1. Clear database
+                self.db_manager.clear_all_data()
+                
+                # 2. Reset all settings files
+                import os
+                settings_files = [
+                    'app_categories.json',
+                    'goals_settings.json',
+                    'reminders_settings.json'
+                ]
+                
+                for filename in settings_files:
+                    filepath = Path(__file__).parent / filename
+                    if filepath.exists():
+                        os.remove(filepath)
+                        print(f"Deleted {filename}")
+                
+                # 3. Reset category manager
+                self.category_manager.categories = {}
+                self.category_manager.save_categories()
+                
+                # 4. Update all widgets in the main window
                 main_window = self.window()
+                
+                # Update history
+                self.update_history()
+                
+                # Update analytics
+                if hasattr(main_window, 'analytics_widget'):
+                    main_window.analytics_widget.update_analytics()
+                
+                # Update productivity
+                if hasattr(main_window, 'productivity_widget'):
+                    main_window.productivity_widget.update_productivity_data()
+                
+                # Update advanced analytics (Insights tab)
+                if hasattr(main_window, 'advanced_analytics_widget'):
+                    # Force complete refresh by reinitializing the UI
+                    main_window.advanced_analytics_widget.init_ui()
+                
+                # Reset goals
+                if hasattr(main_window, 'goals_widget'):
+                    main_window.goals_widget.update_progress()
+                
+                # Show success notification
                 if hasattr(main_window, 'notifier') and main_window.notifier:
                     main_window.notifier.success(
-                        "Data Cleared",
-                        "All tracking data has been cleared successfully.",
+                        "All Data Cleared! ✅",
+                        "All tracking data and settings have been reset to defaults.",
                         duration=4000
                     )
-            except:
-                pass
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Success",
+                        "All data has been cleared and reset to defaults!"
+                    )
+                    
+                print("✅ All data cleared and reset to defaults successfully!")
+                
+            except Exception as e:
+                print(f"Error clearing data: {e}")
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    f"Failed to clear all data:\n{str(e)}"
+                )
 
 class MainWindow(QMainWindow):
     def __init__(self):
